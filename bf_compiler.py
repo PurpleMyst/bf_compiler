@@ -201,13 +201,14 @@ def main():
 
     argp.add_argument("filename",
                       help="The brainfuck code file.")
-    argp.add_argument("-p", "--print", action="store_true",
+    argp.add_argument("-i", "--ir", action="store_true",
                       help="Print out the human-readable LLVM IR to stderr")
-    group = argp.add_mutually_exclusive_group(required=True)
-    group.add_argument('-r', '--run', action="store_true",
-                       help="Run the brainfuck code with McJIT.")
-    group.add_argument('-c', '--bitcode', action="store_true",
-                       help="Emit a bitcode file.")
+    argp.add_argument('-r', '--run', action="store_true",
+                      help="Run the brainfuck code with McJIT.")
+    argp.add_argument('-c', '--bitcode', action="store_true",
+                      help="Emit a bitcode file.")
+    argp.add_argument('-o', '--optimize', action="store_true",
+                      help="Optimize the bitcode.")
 
     argv = argp.parse_args()
 
@@ -218,37 +219,39 @@ def main():
     with open(argv.filename) as bf_file:
         ir_module = bf_to_ir(bf_file.read())
 
+    basename = os.path.basename(argv.filename)
+    basename = os.path.splitext(basename)[0]
+
     if argv.print:
-        print(ir_module, file=sys.stderr)
+        with open(basename + ".ir", "w") as f:
+            f.write(str(ir_module))
+
+        print("Wrote IR to", basename + ".ir")
 
     binding_module = llvm.parse_assembly(str(ir_module))
     binding_module.verify()
 
-    llvm.ModulePassManager().run(binding_module)
+    if argv.optimize:
+        llvm.ModulePassManager().run(binding_module)
 
-    # XXX: We can move this "with" into the "else" branch.
-    with create_execution_engine() as engine:
-        engine.add_module(binding_module)
-        engine.finalize_object()
-        engine.run_static_constructors()
+    if argv.bitcode:
+        bitcode = binding_module.as_bitcode()
 
-        if argv.bitcode:
-            bitcode = binding_module.as_bitcode()
+        with open(basename + ".bc", "wb") as output_file:
+            output_file.write(bitcode)
 
-            bc_filename = os.path.splitext(argv.filename)[0]
-            bc_filename += ".bc"
+        print("Wrote bitcode to", basename + ".bc")
 
-            with open(bc_filename, "wb") as output_file:
-                output_file.write(bitcode)
+    if argv.run:
+        with create_execution_engine() as engine:
+            engine.add_module(binding_module)
+            engine.finalize_object()
+            engine.run_static_constructors()
 
-            print("Wrote bitcode to", bc_filename)
-        elif argv.run:
             func_ptr = engine.get_function_address("main")
             asm_main = ctypes.CFUNCTYPE(ctypes.c_int)(func_ptr)
             result = asm_main()
             sys.exit(result)
-        else:
-            raise RuntimeError("If you can read this, you are a magician.")
 
 
 if __name__ == "__main__":
