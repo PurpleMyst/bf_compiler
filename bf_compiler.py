@@ -222,7 +222,7 @@ def main():
     basename = os.path.basename(argv.filename)
     basename = os.path.splitext(basename)[0]
 
-    if argv.print:
+    if argv.ir:
         with open(basename + ".ir", "w") as f:
             f.write(str(ir_module))
 
