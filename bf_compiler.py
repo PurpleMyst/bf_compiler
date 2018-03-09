@@ -201,6 +201,8 @@ def main():
 
     argp.add_argument("filename",
                       help="The brainfuck code file.")
+    argp.add_argument("-p", "--print", action="store_true",
+                      help="Print out the human-readable LLVM IR to stderr")
     group = argp.add_mutually_exclusive_group(required=True)
     group.add_argument('-r', '--run', action="store_true",
                        help="Run the brainfuck code with McJIT.")
@@ -215,6 +217,9 @@ def main():
 
     with open(argv.filename) as bf_file:
         ir_module = bf_to_ir(bf_file.read())
+
+    if argv.print:
+        print(ir_module, file=sys.stderr)
 
     binding_module = llvm.parse_assembly(str(ir_module))
     binding_module.verify()
