@@ -228,10 +228,6 @@ def main():
         engine.run_static_constructors()
 
         if argv.bitcode:
-            # emit bitcode
-            triple = llvm.get_default_triple()
-            binding_module.triple = triple
-
             bitcode = binding_module.as_bitcode()
 
             bc_filename = os.path.splitext(argv.filename)[0]
@@ -242,7 +238,6 @@ def main():
 
             print("Wrote bitcode to", bc_filename)
         elif argv.run:
-            # run inplace
             func_ptr = engine.get_function_address("main")
             asm_main = ctypes.CFUNCTYPE(ctypes.c_int)(func_ptr)
             result = asm_main()

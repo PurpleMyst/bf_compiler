@@ -20,10 +20,9 @@ After installing the requirements, you can choose to:
 - Compile your brainfuck to bitcode by running `python3 bf_compiler.py --bitcode
   example.bf`, which will emit a `example.bc` file.
 
-You can compile your LLVM bitcode to machine code by running `llc example.bc
-&& clang example.s -o example`, which will compile your LLVM bitcode
-to a readable asm first (which you can read, if you want) and then to a machine
-code executable.
+You can compile your LLVM bitcode to machine code by running `clang example.bc
+-o example`, which will compile your LLVM bitcode directly to machine code. You
+may get a warning about a "triple", but don't worry about that. ;)
 
 ## Thanks To
 
