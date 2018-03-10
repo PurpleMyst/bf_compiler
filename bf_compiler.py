@@ -6,7 +6,7 @@ import sys
 
 from llvmlite import ir, binding as llvm
 
-TAPE_SIZE = 30_000
+INDEX_BIT_SIZE = 16
 
 
 def parse(bf):
@@ -27,8 +27,7 @@ def parse(bf):
 def bf_to_ir(bf):
     ast = parse(bf)
 
-    int8 = ir.IntType(8)
-    int16 = ir.IntType(16)
+    byte = ir.IntType(8)
     int32 = ir.IntType(32)
     size_t = ir.IntType(64)
 
@@ -47,21 +46,19 @@ def bf_to_ir(bf):
     getchar_type = ir.FunctionType(int32, ())
     getchar = ir.Function(module, getchar_type, name="getchar")
 
-    bzero_type = ir.FunctionType(void, (int8.as_pointer(), size_t))
+    bzero_type = ir.FunctionType(void, (byte.as_pointer(), size_t))
     bzero = ir.Function(module, bzero_type, name="bzero")
 
-    index_type = int16
+    index_type = ir.IntType(INDEX_BIT_SIZE)
     index = builder.alloca(index_type)
     builder.store(ir.Constant(index_type, 0), index)
 
-    tape_type = int8
-    tape = builder.alloca(tape_type, size=TAPE_SIZE)
-    builder.call(bzero, (tape, size_t(TAPE_SIZE)))
+    tape_type = byte
+    tape = builder.alloca(tape_type, size=2 ** INDEX_BIT_SIZE)
+    builder.call(bzero, (tape, size_t(2 ** INDEX_BIT_SIZE)))
 
-    zero8 = int8(0)
-    one8 = int8(1)
-
-    one16 = int16(1)
+    zero8 = byte(0)
+    one8 = byte(1)
 
     eof = int32(-1)
 
@@ -113,42 +110,22 @@ def bf_to_ir(bf):
         elif instruction == "+" or instruction == "-":
             location = get_tape_location()
             value = builder.load(location)
+
             if instruction == "+":
-                new_value = builder.sadd_with_overflow(value, one8)
+                new_value = builder.add(value, one8)
             else:
-                new_value = builder.ssub_with_overflow(value, one8)
-            new_value = builder.extract_value(new_value, 0)
+                new_value = builder.sub(value, one8)
+
             builder.store(new_value, location)
         elif instruction == ">" or instruction == "<":
             index_value = builder.load(index)
 
             if instruction == ">":
-                index_value = builder.add(index_value, one16, flags=("nuw",
-                                                                     "nsw"))
+                index_value = builder.add(index_value, index_type(1))
             else:
-                index_value = builder.sub(index_value, one16, flags=("nuw",
-                                                                     "nsw"))
+                index_value = builder.sub(index_value, index_type(1))
 
-            # Takes care of overflow. I could use a `if/else` and check if
-            # `index_value == TAPE_SIZE` but I couldn't be bothered to.
-            index_value = builder.srem(index_value, index_type(TAPE_SIZE))
-
-            # We need to handle underflow specially, due to the `srem`
-            # operation in LLVM being a remainder, *NOT* a modulo, meaning that
-            # for negative numbers the behavior is not what you would expect in
-            # Python or some other language.
-            underflow = builder.icmp_signed("==", index_value, int32(-1))
-
-            # it's very unlikely we underflow in a properly written program.
-            with builder.if_else(underflow, likely=1) as (then, otherwise):
-                with then:
-                    last_index = builder.sub(index_type(TAPE_SIZE),
-                                             index_type(1))
-
-                    builder.store(last_index, index)
-
-                with otherwise:
-                    builder.store(index_value, index)
+            builder.store(index_value, index)
 
         elif instruction == ".":
             location = get_tape_location()
