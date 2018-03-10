@@ -35,9 +35,9 @@ def bf_to_ir(bf):
     void = ir.VoidType()
 
     module = ir.Module(name=__file__)
-    fnty = ir.FunctionType(int32, ())
-    func = ir.Function(module, fnty, name="main")
-    entry = func.append_basic_block(name="entry")
+    main_type = ir.FunctionType(int32, ())
+    main_func = ir.Function(module, main_type, name="main")
+    entry = main_func.append_basic_block(name="entry")
 
     builder = ir.IRBuilder(entry)
 
@@ -65,6 +65,12 @@ def bf_to_ir(bf):
 
     eof = int32(-1)
 
+    def get_tape_location():
+        index_value = builder.load(index)
+        index_value = builder.zext(index_value, int32)
+        location = builder.gep(tape, (index_value,), inbounds=True)
+        return location
+
     def compile_instruction(instruction):
         if isinstance(instruction, list):
             # You may initially analyze this code and think that it'll error
@@ -82,9 +88,7 @@ def bf_to_ir(bf):
             builder.position_at_start(preloop)
 
             # load tape value
-            index_value = builder.load(index)
-            index_value = builder.zext(index_value, int32)
-            location = builder.gep(tape, (index_value,))
+            location = get_tape_location()
             tape_value = builder.load(location)
 
             # check tape value
@@ -107,10 +111,7 @@ def bf_to_ir(bf):
 
             builder.position_at_start(postloop)
         elif instruction == "+" or instruction == "-":
-            index_value = builder.load(index)
-            index_value = builder.zext(index_value, int32)
-
-            location = builder.gep(tape, (index_value,))
+            location = get_tape_location()
             value = builder.load(location)
             if instruction == "+":
                 new_value = builder.sadd_with_overflow(value, one8)
@@ -122,9 +123,11 @@ def bf_to_ir(bf):
             index_value = builder.load(index)
 
             if instruction == ">":
-                index_value = builder.add(index_value, one16)
+                index_value = builder.add(index_value, one16, flags=("nuw",
+                                                                     "nsw"))
             else:
-                index_value = builder.sub(index_value, one16)
+                index_value = builder.sub(index_value, one16, flags=("nuw",
+                                                                     "nsw"))
 
             # Takes care of overflow. I could use a `if/else` and check if
             # `index_value == TAPE_SIZE` but I couldn't be bothered to.
@@ -134,9 +137,10 @@ def bf_to_ir(bf):
             # operation in LLVM being a remainder, *NOT* a modulo, meaning that
             # for negative numbers the behavior is not what you would expect in
             # Python or some other language.
-            underflowed = builder.icmp_signed("==", index_value, int32(-1))
+            underflow = builder.icmp_signed("==", index_value, int32(-1))
 
-            with builder.if_else(underflowed) as (then, otherwise):
+            # it's very unlikely we underflow in a properly written program.
+            with builder.if_else(underflow, likely=1) as (then, otherwise):
                 with then:
                     last_index = builder.sub(index_type(TAPE_SIZE),
                                              index_type(1))
@@ -147,19 +151,13 @@ def bf_to_ir(bf):
                     builder.store(index_value, index)
 
         elif instruction == ".":
-            index_value = builder.load(index)
-            index_value = builder.zext(index_value, int32)
-
-            location = builder.gep(tape, (index_value,))
+            location = get_tape_location()
             tape_value = builder.load(location)
             tape_value = builder.zext(tape_value, int32)
 
             builder.call(putchar, (tape_value,))
         elif instruction == ",":
-            index_value = builder.load(index)
-            index_value = builder.zext(index_value, int32)
-
-            location = builder.gep(tape, (index_value,))
+            location = get_tape_location()
 
             char = builder.call(getchar, ())
             is_eof = builder.icmp_unsigned("==", char, eof)
@@ -223,15 +221,16 @@ def main():
     basename = os.path.splitext(basename)[0]
 
     if argv.ir:
-        with open(basename + ".ir", "w") as f:
+        with open(basename + ".ll", "w") as f:
             f.write(str(ir_module))
 
-        print("Wrote IR to", basename + ".ir")
+        print("Wrote IR to", basename + ".ll")
 
     binding_module = llvm.parse_assembly(str(ir_module))
     binding_module.verify()
 
     if argv.optimize:
+        # TODO: We should define our own pass order.
         llvm.ModulePassManager().run(binding_module)
 
     if argv.bitcode:
